@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>ネオン玉ころがし</title>
+<style>
+  :root{
+    --bg:#0b0e1a; --panel:#141a2e; --line:#2a3555;
+    --cyan:#39e6ff; --yellow:#ffd93b; --red:#ff4d6d; --orange:#ff9f1c;
+    --green:#5dff5d; --purple:#b06bff; --white:#f2f5ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"BIZ UDPGothic","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    color:var(--white);touch-action:none;user-select:none;-webkit-user-select:none;}
+  #game{position:fixed;inset:0;}
+  canvas{display:block;}
+
+  /* ===== HUD ===== */
+  #hud{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 8px;
+    display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:5;}
+  .badge{background:rgba(20,26,46,.85);border:2px solid var(--line);border-radius:12px;
+    padding:8px 14px;font-size:15px;font-weight:700;min-height:44px;display:flex;align-items:center;gap:8px;}
+  #zoneBadge{color:var(--white);}
+  #zoneBadge .dot{width:12px;height:12px;border-radius:50%;background:#4a5578;flex:none;}
+
+  #invertWarn{position:fixed;top:18%;left:50%;transform:translateX(-50%);z-index:6;
+    background:rgba(255,159,28,.95);color:#1a0e00;border-radius:14px;padding:12px 22px;
+    font-size:clamp(18px,5vw,26px);font-weight:900;letter-spacing:.05em;display:none;
+    box-shadow:0 0 24px rgba(255,159,28,.8);animation:blink .5s steps(2) infinite;pointer-events:none;}
+  @keyframes blink{50%{opacity:.35;}}
+
+  #toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:6;
+    font-size:clamp(28px,9vw,54px);font-weight:900;letter-spacing:.08em;display:none;
+    text-shadow:0 0 22px currentColor;pointer-events:none;white-space:nowrap;}
+
+  /* ===== オーバーレイ共通 ===== */
+  .overlay{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;
+    justify-content:center;align-items:center;gap:18px;padding:24px;text-align:center;
+    background:rgba(7,9,18,.88);backdrop-filter:blur(4px);}
+  .overlay h1{font-size:clamp(30px,9vw,56px);font-weight:900;letter-spacing:.06em;}
+  .overlay p{font-size:clamp(14px,4vw,17px);line-height:1.9;max-width:520px;color:#c6cfee;}
+  .btn{min-width:220px;min-height:56px;padding:14px 32px;border:none;border-radius:16px;
+    font-family:inherit;font-size:20px;font-weight:900;letter-spacing:.05em;cursor:pointer;
+    color:#00222b;background:linear-gradient(180deg,var(--cyan),#18b8d8);
+    box-shadow:0 0 26px rgba(57,230,255,.55);}
+  .btn:active{transform:scale(.96);}
+  .legend{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;text-align:left;
+    background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:14px 18px;
+    font-size:clamp(12px,3.4vw,15px);max-width:480px;}
+  .legend .sw{width:18px;height:18px;border-radius:5px;margin-top:2px;}
+  .small{font-size:12px;color:#8b96be;}
+  #titleScreen h1{color:var(--cyan);text-shadow:0 0 30px rgba(57,230,255,.7);}
+  #clearScreen{display:none;}
+  #clearScreen h1{color:var(--yellow);text-shadow:0 0 34px rgba(255,217,59,.8);}
+</style>
+</head>
+<body>
+<div id="game"></div>
+
+<div id="hud">
+  <div class="badge" id="zoneBadge"><span class="dot" id="zoneDot"></span><span id="zoneText">つうじょう</span></div>
+  <div class="badge" id="fallBadge">おちた回数：<span id="fallCount">0</span></div>
+</div>
+<div id="invertWarn">⚠ 操作反転中！ ⚠</div>
+<div id="toast"></div>
+
+<!-- タイトル画面 -->
+<div class="overlay" id="titleScreen">
+  <h1>ネオン玉ころがし</h1>
+  <p>端末をかたむけて、青いボールを<br><b style="color:var(--yellow)">黄色く光るゴール</b>まで運ぼう！</p>
+  <div class="legend">
+    <div class="sw" style="background:var(--red)"></div><div>赤いキューブ：ぶつかると弾き飛ばされる</div>
+    <div class="sw" style="background:#000;border:1px solid #555"></div><div>黒い穴：吸いこまれて落ちたらスタートに戻る</div>
+    <div class="sw" style="background:var(--green)"></div><div>緑の床：油でツルツル。ブレーキがきかない</div>
+    <div class="sw" style="background:var(--purple)"></div><div>紫の床：沼。スピードが出ない</div>
+    <div class="sw" style="background:var(--orange)"></div><div>オレンジの箱：3秒間、傾きが反転する</div>
+  </div>
+  <button class="btn" id="startBtn">タップしてスタート</button>
+  <p class="small">※ ジャイロセンサーの使用許可を求めます／PCでは矢印キーでも動かせます</p>
+</div>
+
+<!-- クリア画面 -->
+<div class="overlay" id="clearScreen">
+  <h1>CLEAR!</h1>
+  <p id="clearMsg"></p>
+  <button class="btn" id="retryBtn" style="color:#2b2200;background:linear-gradient(180deg,var(--yellow),#e0b400);box-shadow:0 0 26px rgba(255,217,59,.55)">もういちど あそぶ</button>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* =========================================================
+   基本セットアップ
+========================================================= */
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.getElementById('game').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e1a);
+scene.fog = new THREE.Fog(0x0b0e1a, 55, 110);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 200);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(10, 25, 8);
+scene.add(dirLight);
+const dirLight2 = new THREE.DirectionalLight(0x6688ff, 0.4);
+dirLight2.position.set(-12, 18, -10);
+scene.add(dirLight2);
+
+/* =========================================================
+   ステージ定数
+========================================================= */
+const STAGE_HW = 10;   // x: -10 〜 +10
+const STAGE_HD = 15;   // z: -15 〜 +15
+const BALL_R   = 0.6;
+const START_POS = new THREE.Vector3(0, BALL_R, 12.5);
+const GOAL_POS  = new THREE.Vector3(0, 0, -13);
+
+/* ---- 床 ---- */
+const floorMat = new THREE.MeshStandardMaterial({color:0x1c2440, roughness:0.85});
+const floor = new THREE.Mesh(new THREE.BoxGeometry(STAGE_HW*2, 1, STAGE_HD*2), floorMat);
+floor.position.y = -0.5;
+scene.add(floor);
+
+/* 床のグリッド線（視認性アップ） */
+const grid = new THREE.GridHelper(STAGE_HW*2, 10, 0x39508a, 0x2a3a66);
+grid.position.y = 0.012;
+grid.scale.z = STAGE_HD/STAGE_HW;
+scene.add(grid);
+
+/* ---- 壁（外周＋内壁） AABB管理 ---- */
+const wallMat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.3, emissive:0x333333});
+const walls = []; // {minX,maxX,minZ,maxZ}
+function addWall(cx, cz, sx, sz, h=1.4){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(sx, h, sz), wallMat);
+  m.position.set(cx, h/2, cz);
+  scene.add(m);
+  walls.push({minX:cx-sx/2, maxX:cx+sx/2, minZ:cz-sz/2, maxZ:cz+sz/2});
+}
+const T = 0.6; // 壁の厚み
+addWall(0, -STAGE_HD - T/2, STAGE_HW*2 + T*2, T);  // 上
+addWall(0,  STAGE_HD + T/2, STAGE_HW*2 + T*2, T);  // 下
+addWall(-STAGE_HW - T/2, 0, T, STAGE_HD*2);        // 左
+addWall( STAGE_HW + T/2, 0, T, STAGE_HD*2);        // 右
+/* 内壁：ルートを作る */
+addWall(-6.0, 10, 8, T);   // スタート前・左ふさぎ
+addWall( 6.0, 10, 8, T);   // スタート前・右ふさぎ（中央だけ通れる）
+addWall(-10+2.75, -8.5, 5.5, T); // ゴール手前・左
+addWall( 10-2.75, -8.5, 5.5, T); // ゴール手前・右
+
+/* ---- ゴール（黄色く光る円盤） ---- */
+const goalGroup = new THREE.Group();
+const goalDisc = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.3, 1.3, 0.12, 40),
+  new THREE.MeshStandardMaterial({color:0xffd93b, emissive:0xffc400, emissiveIntensity:1.2})
+);
+goalDisc.position.y = 0.06;
+const goalRing = new THREE.Mesh(
+  new THREE.TorusGeometry(1.55, 0.09, 12, 48),
+  new THREE.MeshBasicMaterial({color:0xffe680})
+);
+goalRing.rotation.x = Math.PI/2;
+goalRing.position.y = 0.14;
+goalGroup.add(goalDisc, goalRing);
+goalGroup.position.copy(GOAL_POS);
+scene.add(goalGroup);
+const goalLight = new THREE.PointLight(0xffd93b, 2.2, 10);
+goalLight.position.set(GOAL_POS.x, 2.2, GOAL_POS.z);
+scene.add(goalLight);
+
+/* ---- 自機ボール（青） ---- */
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(BALL_R, 28, 22),
+  new THREE.MeshStandardMaterial({color:0x2f8bff, emissive:0x1050c0, emissiveIntensity:0.6, roughness:0.25, metalness:0.15})
+);
+scene.add(ball);
+/* 影がわりのマーカー */
+const ballShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(BALL_R*0.95, 24),
+  new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.4})
+);
+ballShadow.rotation.x = -Math.PI/2;
+ballShadow.position.y = 0.02;
+scene.add(ballShadow);
+
+/* ---- 特殊床エリア（AABB） ---- */
+function addZone(cx, cz, sx, sz, color, emissive){
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(sx, 0.06, sz),
+    new THREE.MeshStandardMaterial({color, emissive, emissiveIntensity:0.55, roughness:0.6})
+  );
+  m.position.set(cx, 0.03, cz);
+  scene.add(m);
+  return {minX:cx-sx/2, maxX:cx+sx/2, minZ:cz-sz/2, maxZ:cz+sz/2};
+}
+const oilZones = [
+  addZone(-5.5, 4.5, 8, 5, 0x1f7a1f, 0x39ff39),   // ぬるぬる油床（蛍光緑）
+];
+const swampZones = [
+  addZone(5.5, -3.5, 8, 5, 0x4a1f80, 0x8a3bff),   // 底なし沼床（紫）
+];
+
+/* ---- 落とし穴（黒い円形） ---- */
+const pits = []; // {x,z,r}
+function addPit(x, z, r){
+  const disc = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r, 0.08, 36),
+    new THREE.MeshBasicMaterial({color:0x000000})
+  );
+  disc.position.set(x, 0.045, z);
+  scene.add(disc);
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(r, 0.07, 10, 40),
+    new THREE.MeshBasicMaterial({color:0xff4d6d})
+  );
+  rim.rotation.x = Math.PI/2;
+  rim.position.set(x, 0.09, z);
+  scene.add(rim);
+  pits.push({x, z, r});
+}
+addPit(-4.5, 0.5, 1.35);
+addPit(4.0, 7.0, 1.35);
+addPit(0.0, -5.5, 1.5);
+
+/* ---- パトロール・キューブ（赤・往復運動） ---- */
+const patrols = []; // {mesh,axis,center,amp,speed,phase,half}
+function addPatrol(cx, cz, axis, amp, speed, phase, size=1.5){
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(size, size, size),
+    new THREE.MeshStandardMaterial({color:0xff2244, emissive:0xcc0022, emissiveIntensity:0.7, roughness:0.35})
+  );
+  m.position.set(cx, size/2, cz);
+  scene.add(m);
+  patrols.push({mesh:m, axis, cx, cz, amp, speed, phase, half:size/2});
+}
+addPatrol( 0,  8.0, 'x', 6.5, 0.9, 0);
+addPatrol( 0,  1.5, 'x', 6.5, 1.2, Math.PI);
+addPatrol(-6.0, -4.5, 'z', 3.0, 1.4, 0.5);
+addPatrol( 0, -10.8, 'x', 5.0, 1.6, 2.0);
+
+/* ---- 傾き反転アイテム（オレンジ小箱） ---- */
+const items = []; // {mesh,x,z,active,respawn}
+function addItem(x, z){
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(0.75, 0.75, 0.75),
+    new THREE.MeshStandardMaterial({color:0xff9f1c, emissive:0xff8800, emissiveIntensity:0.9})
+  );
+  m.position.set(x, 0.55, z);
+  scene.add(m);
+  items.push({mesh:m, x, z, active:true, respawn:0});
+}
+addItem(0, 4.5);
+addItem(-2.5, -7.0);
+
+/* =========================================================
+   カメラ：俯瞰（クォータービュー）＋レスポンシブフィット
+========================================================= */
+const camDir = new THREE.Vector3(0, 2.1, 1.15).normalize(); // 見下ろし角度
+const camTarget = new THREE.Vector3(0, 0, 0.5);
+function fitCamera(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  const corners = [
+    new THREE.Vector3(-STAGE_HW-1, 0,  STAGE_HD+1),
+    new THREE.Vector3( STAGE_HW+1, 0,  STAGE_HD+1),
+    new THREE.Vector3(-STAGE_HW-1, 1.5, -STAGE_HD-1),
+    new THREE.Vector3( STAGE_HW+1, 1.5, -STAGE_HD-1),
+  ];
+  let dist = 20;
+  for(let i=0;i<40;i++){
+    camera.position.copy(camTarget).addScaledVector(camDir, dist);
+    camera.lookAt(camTarget);
+    camera.updateMatrixWorld();
+    camera.updateProjectionMatrix();
+    let ok = true;
+    for(const c of corners){
+      const p = c.clone().project(camera);
+      if(Math.abs(p.x) > 0.94 || Math.abs(p.y) > 0.90){ ok=false; break; }
+    }
+    if(ok) break;
+    dist += 1.6;
+  }
+}
+function onResize(){
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  fitCamera();
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', ()=>setTimeout(onResize, 300));
+fitCamera();
+
+/* =========================================================
+   サウンド（Web Audio API・外部ファイルなし）
+========================================================= */
+let AC = null;
+function initAudio(){
+  if(!AC){ AC = new (window.AudioContext||window.webkitAudioContext)(); }
+  if(AC.state === 'suspended') AC.resume();
+}
+function tone(freq, dur, type='square', vol=0.15, slideTo=null, delay=0){
+  if(!AC) return;
+  const t0 = AC.currentTime + delay;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0+dur);
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+  o.connect(g).connect(AC.destination);
+  o.start(t0); o.stop(t0+dur+0.05);
+}
+const SE = {
+  bounce(){ tone(220, 0.08, 'square', 0.08); },
+  knock(){ tone(140, 0.25, 'sawtooth', 0.2, 60); },
+  item(){ tone(500, 0.12, 'square', 0.14, 900); tone(900, 0.12, 'square', 0.12, 500, 0.1); },
+  fall(){ tone(400, 0.6, 'sine', 0.2, 60); },
+  clear(){ [523,659,784,1047].forEach((f,i)=>tone(f, 0.22, 'square', 0.14, null, i*0.13)); },
+};
+
+/* =========================================================
+   入力（ジャイロ＋キーボードフォールバック）
+========================================================= */
+let tiltX = 0, tiltZ = 0;          // -1〜1 に正規化
+let kb = {x:0, z:0};
+const TILT_MAX = 26;               // 何度傾けたら最大加速か
+
+function screenAngle(){
+  if(screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+  return (typeof window.orientation === 'number') ? window.orientation : 0;
+}
+function onOrient(e){
+  if(e.beta === null || e.gamma === null) return;
+  const b = e.beta, g = e.gamma;
+  let tx, tz;
+  const a = ((screenAngle() % 360) + 360) % 360;
+  if(a === 0){ tx = g;  tz = b; }
+  else if(a === 90){ tx = b;  tz = -g; }
+  else if(a === 180){ tx = -g; tz = -b; }
+  else { tx = -b; tz = g; }   // 270
+  tiltX = THREE.MathUtils.clamp(tx / TILT_MAX, -1, 1);
+  tiltZ = THREE.MathUtils.clamp(tz / TILT_MAX, -1, 1);
+}
+window.addEventListener('keydown', e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') kb.x=-1;
+  if(e.key==='ArrowRight'||e.key==='d') kb.x=1;
+  if(e.key==='ArrowUp'||e.key==='w') kb.z=-1;
+  if(e.key==='ArrowDown'||e.key==='s') kb.z=1;
+});
+window.addEventListener('keyup', e=>{
+  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='ArrowRight'||e.key==='d') kb.x=0;
+  if(e.key==='ArrowUp'||e.key==='w'||e.key==='ArrowDown'||e.key==='s') kb.z=0;
+});
+
+/* =========================================================
+   ゲーム状態
+========================================================= */
+const vel = new THREE.Vector3();
+let state = 'title';        // title | play | falling | clear
+let invertTimer = 0;        // 操作反転の残り秒
+let fallAnim = 0;
+let fallTarget = null;
+let falls = 0;
+let playTime = 0;
+
+const $ = id => document.getElementById(id);
+const toastEl = $('toast');
+let toastTimer = null;
+function toast(text, color, ms=1200){
+  toastEl.textContent = text;
+  toastEl.style.color = color;
+  toastEl.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toastEl.style.display='none', ms);
+}
+
+function resetBall(){
+  ball.position.copy(START_POS);
+  vel.set(0,0,0);
+  invertTimer = 0;
+  $('invertWarn').style.display = 'none';
+}
+function fullReset(){
+  resetBall();
+  falls = 0; playTime = 0;
+  $('fallCount').textContent = '0';
+  for(const it of items){ it.active = true; it.respawn = 0; it.mesh.visible = true; }
+}
+
+/* ---- スタートボタン：ジャイロ許可 ---- */
+$('startBtn').addEventListener('click', async ()=>{
+  initAudio();
+  try{
+    if(typeof DeviceOrientationEvent !== 'undefined' &&
+       typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const res = await DeviceOrientationEvent.requestPermission();
+      if(res === 'granted') window.addEventListener('deviceorientation', onOrient);
+    }else{
+      window.addEventListener('deviceorientation', onOrient);
+    }
+  }catch(err){ /* 拒否時はキーボードのみ */ }
+  $('titleScreen').style.display = 'none';
+  fullReset();
+  state = 'play';
+  tone(660, 0.12, 'square', 0.12, 990);
+});
+$('retryBtn').addEventListener('click', ()=>{
+  initAudio();
+  $('clearScreen').style.display = 'none';
+  fullReset();
+  state = 'play';
+});
+/* クリア画面は画面のどこをタップしてもリスタート */
+$('clearScreen').addEventListener('pointerdown', e=>{
+  if(e.target.id === 'retryBtn') return;
+  $('retryBtn').click();
+});
+
+/* =========================================================
+   物理・当たり判定
+========================================================= */
+function inRect(r, x, z, pad=0){
+  return x > r.minX - pad && x < r.maxX + pad && z > r.minZ - pad && z < r.maxZ + pad;
+}
+function resolveWall(w){
+  const px = ball.position.x, pz = ball.position.z;
+  const cx = THREE.MathUtils.clamp(px, w.minX, w.maxX);
+  const cz = THREE.MathUtils.clamp(pz, w.minZ, w.maxZ);
+  const dx = px - cx, dz = pz - cz;
+  const d2 = dx*dx + dz*dz;
+  if(d2 >= BALL_R*BALL_R) return false;
+  const d = Math.sqrt(d2) || 0.0001;
+  const nx = dx/d, nz = dz/d;
+  const push = BALL_R - d;
+  ball.position.x += nx * push;
+  ball.position.z += nz * push;
+  const vn = vel.x*nx + vel.z*nz;
+  if(vn < 0){
+    vel.x -= (1 + 0.45) * vn * nx;
+    vel.z -= (1 + 0.45) * vn * nz;
+    if(Math.abs(vn) > 2.5) SE.bounce();
+  }
+  return true;
+}
+
+const zoneDot = $('zoneDot'), zoneText = $('zoneText');
+function setZoneBadge(mode){
+  if(mode==='oil'){ zoneDot.style.background='var(--green)'; zoneText.textContent='ツルツル！'; }
+  else if(mode==='swamp'){ zoneDot.style.background='var(--purple)'; zoneText.textContent='沼で重い…'; }
+  else { zoneDot.style.background='#4a5578'; zoneText.textContent='つうじょう'; }
+}
+
+/* =========================================================
+   メインループ（delta-time正規化：120Hz対応）
+========================================================= */
+const clock = new THREE.Clock();
+const rollAxis = new THREE.Vector3();
+const UP = new THREE.Vector3(0,1,0);
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);  // 最大50msにクランプ
+  const t = clock.elapsedTime;
+
+  /* ゴール演出（常時） */
+  goalGroup.rotation.y += dt * 1.5;
+  goalDisc.material.emissiveIntensity = 1.0 + Math.sin(t*4)*0.4;
+  goalRing.position.y = 0.14 + Math.sin(t*3)*0.05;
+
+  /* パトロール・キューブ移動（常時） */
+  for(const p of patrols){
+    const off = Math.sin(t * p.speed + p.phase) * p.amp;
+    if(p.axis === 'x') p.mesh.position.x = p.cx + off;
+    else               p.mesh.position.z = p.cz + off;
+    p.mesh.rotation.y += dt * 2;
+  }
+  /* アイテム演出＆リスポーン */
+  for(const it of items){
+    if(it.active){
+      it.mesh.rotation.y += dt * 3;
+      it.mesh.position.y = 0.55 + Math.sin(t*4 + it.x)*0.12;
+    }else{
+      it.respawn -= dt;
+      if(it.respawn <= 0){ it.active = true; it.mesh.visible = true; }
+    }
+  }
+
+  if(state === 'play'){
+    playTime += dt;
+
+    /* --- 入力合成 --- */
+    let ix = THREE.MathUtils.clamp(tiltX + kb.x, -1, 1);
+    let iz = THREE.MathUtils.clamp(tiltZ + kb.z, -1, 1);
+    if(invertTimer > 0){
+      ix = -ix; iz = -iz;
+      invertTimer -= dt;
+      if(invertTimer <= 0) $('invertWarn').style.display = 'none';
+    }
+
+    /* --- ゾーン判定 --- */
+    const px = ball.position.x, pz = ball.position.z;
+    let onOil = false, onSwamp = false;
+    for(const z of oilZones)   if(inRect(z, px, pz)) onOil = true;
+    for(const z of swampZones) if(inRect(z, px, pz)) onSwamp = true;
+    setZoneBadge(onOil ? 'oil' : onSwamp ? 'swamp' : 'normal');
+
+    /* --- 加速・摩擦・最高速（手触り調整） --- */
+    let accel = 24, damping = 1.6, maxSpd = 13;
+    if(onSwamp){ accel = 7; damping = 6.0; maxSpd = 3.2; }   // 沼：極端に遅い
+    if(onOil){ damping = 0; }                                 // 油：摩擦ゼロ
+
+    vel.x += ix * accel * dt;
+    vel.z += iz * accel * dt;
+    if(damping > 0){
+      const f = Math.exp(-damping * dt);
+      vel.x *= f; vel.z *= f;
+    }
+    const spd = Math.hypot(vel.x, vel.z);
+    if(spd > maxSpd){ vel.x *= maxSpd/spd; vel.z *= maxSpd/spd; }
+
+    /* --- 落とし穴の引力 --- */
+    for(const pit of pits){
+      const dx = pit.x - px, dz = pit.z - pz;
+      const d = Math.hypot(dx, dz);
+      const pull = pit.r + 2.0;
+      if(d < pull){
+        const s = 30 * (1 - d/pull);
+        vel.x += (dx/(d||0.001)) * s * dt;
+        vel.z += (dz/(d||0.001)) * s * dt;
+        if(d < pit.r * 0.55){
+          state = 'falling';
+          fallAnim = 0;
+          fallTarget = pit;
+          falls++;
+          $('fallCount').textContent = falls;
+          $('invertWarn').style.display = 'none';
+          invertTimer = 0;
+          SE.fall();
+          toast('おちた！', 'var(--red)', 1000);
+        }
+      }
+    }
+
+    /* --- 移動 --- */
+    ball.position.x += vel.x * dt;
+    ball.position.z += vel.z * dt;
+
+    /* --- 壁との衝突 --- */
+    for(const w of walls) resolveWall(w);
+
+    /* --- パトロール・キューブ衝突（大きく弾き飛ばす） --- */
+    for(const p of patrols){
+      const m = p.mesh.position;
+      const cx = THREE.MathUtils.clamp(ball.position.x, m.x - p.half, m.x + p.half);
+      const cz = THREE.MathUtils.clamp(ball.position.z, m.z - p.half, m.z + p.half);
+      const dx = ball.position.x - cx, dz = ball.position.z - cz;
+      if(dx*dx + dz*dz < BALL_R*BALL_R){
+        let nx = ball.position.x - m.x, nz = ball.position.z - m.z;
+        const n = Math.hypot(nx, nz) || 0.001;
+        nx /= n; nz /= n;
+        vel.set(nx * 19, 0, nz * 19);          // 進行方向と逆へ大きくノックバック
+        ball.position.x += nx * 0.35;
+        ball.position.z += nz * 0.35;
+        SE.knock();
+      }
+    }
+
+    /* --- 反転アイテム --- */
+    for(const it of items){
+      if(!it.active) continue;
+      const d = Math.hypot(ball.position.x - it.x, ball.position.z - it.z);
+      if(d < BALL_R + 0.6){
+        it.active = false;
+        it.mesh.visible = false;
+        it.respawn = 8;
+        invertTimer = 3;
+        $('invertWarn').style.display = 'block';
+        SE.item();
+      }
+    }
+
+    /* --- ゴール判定 --- */
+    if(Math.hypot(ball.position.x - GOAL_POS.x, ball.position.z - GOAL_POS.z) < 1.3){
+      state = 'clear';
+      SE.clear();
+      $('clearMsg').textContent =
+        `タイム：${playTime.toFixed(1)}秒　／　おちた回数：${falls}回`;
+      setTimeout(()=>{ $('clearScreen').style.display = 'flex'; }, 500);
+      toast('CLEAR!', 'var(--yellow)', 1400);
+    }
+
+    /* --- ボールの転がり回転 --- */
+    const s2 = Math.hypot(vel.x, vel.z);
+    if(s2 > 0.05){
+      rollAxis.set(vel.x, 0, vel.z).normalize().cross(UP).negate();
+      ball.rotateOnWorldAxis(rollAxis, (s2 / BALL_R) * dt);
+    }
+    ball.position.y = BALL_R;
+    ballShadow.position.set(ball.position.x, 0.02, ball.position.z);
+    ballShadow.visible = true;
+  }
+  else if(state === 'falling'){
+    /* 穴に吸い込まれるアニメーション */
+    fallAnim += dt;
+    const k = Math.min(fallAnim / 0.7, 1);
+    ball.position.x += (fallTarget.x - ball.position.x) * dt * 8;
+    ball.position.z += (fallTarget.z - ball.position.z) * dt * 8;
+    ball.position.y = BALL_R - k * 2.2;
+    ball.scale.setScalar(1 - k * 0.5);
+    ballShadow.visible = false;
+    if(fallAnim > 0.9){
+      ball.scale.setScalar(1);
+      resetBall();
+      state = 'play';
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
